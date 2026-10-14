@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.compiler }} / Release
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: cd build && ctest --output-on-failure -j
+
+  sanitizers:
+    name: ASan + UBSan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DORDERFLOW_SANITIZE=ON -DORDERFLOW_BUILD_BENCH=OFF
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: cd build && ctest --output-on-failure -j
+
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-24.04
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (Release, benchmarks only)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DORDERFLOW_BUILD_TESTS=OFF
+          cmake --build build -j --target orderflow_bench orderflow_latency
+      - name: Google Benchmark
+        run: ./build/orderflow_bench --benchmark_format=json --benchmark_out=bench.json --benchmark_out_format=json
+      - name: Latency percentiles (10M-command replay)
+        run: ./build/orderflow_latency --orders 10000000 | tee latency.txt
+      - name: Job summary
+        run: |
+          echo '### Latency (shared GitHub runner - expect noise)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat latency.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            bench.json
+            latency.txt
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-24.04
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image (runs the test suite inside)
+        run: docker build -t orderflow:ci .

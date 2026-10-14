@@ -1,0 +1,15 @@
+# docker compose up --build      -> starts the server on localhost:9000
+# docker compose run --rm client -> fires 100k orders at it and prints latency
+services:
+  server:
+    build: .
+    ports:
+      - "9000:9000"
+    command: ["--port", "9000", "--symbols", "4", "--journal", "/home/orderflow/orders.ofj"]
+
+  client:
+    build: .
+    depends_on: [server]
+    entrypoint: ["orderflow_client"]
+    command: ["--host", "server", "--port", "9000", "--orders", "100000", "--window", "64"]
+    profiles: ["tools"]
